@@ -1,92 +1,173 @@
--- Dingus Hub - MM2 Script (Updated)
--- Beautiful GUI + Role ESP + Chams + Click-to-Shoot Button
-
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local Lighting = game:GetService("Lighting")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- Main ScreenGui
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "DingusHub"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = playerGui
-
--- Beautiful Main Frame
-local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 340, 0, 460)
-MainFrame.Position = UDim2.new(0.5, -170, 0.5, -230)
-MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.Draggable = true
-MainFrame.Parent = ScreenGui
-
-local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 16)
-MainCorner.Parent = MainFrame
-
-local MainStroke = Instance.new("UIStroke")
-MainStroke.Color = Color3.fromRGB(80, 80, 255)
-MainStroke.Thickness = 1.5
-MainStroke.Parent = MainFrame
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 60)
-Title.BackgroundTransparency = 1
-Title.Text = "Dingus Hub"
-Title.TextColor3 = Color3.fromRGB(255, 80, 80)
-Title.TextScaled = true
-Title.Font = Enum.Font.GothamBlack
-Title.Parent = MainFrame
-
-local TitleGradient = Instance.new("UIGradient")
-TitleGradient.Color = ColorSequence.new{
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 100, 100)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(180, 60, 255))
-}
-TitleGradient.Parent = Title
-
--- Variables
-local ESPEnabled = true
-local ChamsEnabled = true
-local ESPObjects = {}
 local ShootButtonLocked = false
 local TargetLock = nil
 
--- Role Detection
+-- Role Detection (Murderer only)
 local function GetRole(player)
     if not player or not player.Character then return "Unknown" end
     local char = player.Character
-    local role = "Innocent"
-    
-    if char:FindFirstChild("Knife") then
-        role = "Murderer"
-    elseif char:FindFirstChild("Gun") or player.Backpack:FindFirstChild("Gun") then
-        role = "Sheriff"
-    elseif player.Backpack:FindFirstChild("Knife") then
-        role = "Murderer"
+    if char:FindFirstChild("Knife") or player.Backpack:FindFirstChild("Knife") then
+        return "Murderer"
     end
-    return role
+    return "Not Murderer"
 end
 
--- Create ESP + Chams
-local function CreateESP(player)
-    if player == LocalPlayer then return end
-    if ESPObjects[player] then return end
+-- Wall Check
+local function IsVisible(target)
+    if not target or not target.Character or not target.Character:FindFirstChild("Head") then return false end
+    local origin = Camera.CFrame.Position
+    local targetPos = target.Character.Head.Position
+    local direction = (targetPos - origin).Unit * 1000
+    local ray = Ray.new(origin, direction)
+    local hit, _ = Workspace:FindPartOnRayWithIgnoreList(ray, {LocalPlayer.Character, target.Character})
+    return hit == nil or hit:IsDescendantOf(target.Character)
+end
+
+-- Prediction (Basic velocity prediction for better accuracy)
+local LastPositions = {}
+local function GetPredictedPosition(target)
+    if not target or not target.Character or not target.Character:FindFirstChild("HumanoidRootPart") then return nil end
+    local root = target.Character.HumanoidRootPart
+    local currentPos = root.Position
     
-    -- Box ESP
-    local box = Drawing.new("Square")
-    box.Thickness = 2.5
-    box.Filled = false
-    box.Transparency = 1
+    if not LastPositions[target] then
+        LastPositions[target] = currentPos
+        return currentPos
+    end
     
+    local velocity = (currentPos - LastPositions[target]) / 0.016 -- Approx 60 FPS delta
+    LastPositions[target] = currentPos
+    
+    -- Predict ahead (tuned for MM2 gun)
+    local predictionTime = 0.15 + (currentPos - Camera.CFrame.Position).Magnitude / 300
+    return currentPos + velocity * predictionTime
+end
+
+-- Get Closest Murderer
+local function GetClosestMurderer()
+    local closest = nil
+    local shortest = math.huge
+    
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+            if GetRole(plr) == "Murderer" and IsVisible(plr) then
+                local dist = (plr.Character.HumanoidRootPart.Position - Camera.CFrame.Position).Magnitude
+                if dist < shortest then
+                    shortest = dist
+                    closest = plr
+                end
+            end
+        end
+    end
+    return closest
+end
+
+-- Powerful Aim + Shoot with Prediction
+local function PowerfulShoot()
+    local target = GetClosestMurderer()
+    if not target or not target.Character or not target.Character:FindFirstChild("Head") then return end
+    
+    local predictedPos = GetPredictedPosition(target)
+    if not predictedPos then return end
+    
+    -- Strong Aim (Smooth + Prediction)
+    local direction = (predictedPos - Camera.CFrame.Position).Unit
+    Camera.CFrame = CFrame.new(Camera.CFrame.Position, Camera.CFrame.Position + direction * 10)
+    
+    -- Fire Gun
+    local char = LocalPlayer.Character
+    if char then
+        local gun = char:FindFirstChild("Gun")
+        if gun and gun:FindFirstChild("Remote") then
+            gun.Remote:FireServer(predictedPos)
+        end
+    end
+end
+
+-- Floating Shoot Button (Big & Powerful)
+local ShootFrame = Instance.new("Frame")
+ShootFrame.Size = UDim2.new(0, 100, 0, 100)
+ShootFrame.Position = UDim2.new(0.8, 0, 0.5, 0)
+ShootFrame.BackgroundColor3 = Color3.fromRGB(200, 20, 20)
+ShootFrame.BorderSizePixel = 0
+ShootFrame.Active = true
+ShootFrame.Draggable = true
+ShootFrame.Parent = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("CoreGui") or LocalPlayer.PlayerGui
+
+local ShootCorner = Instance.new("UICorner")
+ShootCorner.CornerRadius = UDim.new(1, 0)
+ShootCorner.Parent = ShootFrame
+
+local ShootStroke = Instance.new("UIStroke")
+ShootStroke.Color = Color3.fromRGB(255, 255, 100)
+ShootStroke.Thickness = 4
+ShootStroke.Parent = ShootFrame
+
+local ShootText = Instance.new("TextLabel")
+ShootText.Size = UDim2.new(1, 0, 1, 0)
+ShootText.BackgroundTransparency = 1
+ShootText.Text = "🔫\nSHOOT"
+ShootText.TextColor3 = Color3.fromRGB(255, 255, 255)
+ShootText.TextScaled = true
+ShootText.Font = Enum.Font.GothamBold
+ShootText.Parent = ShootFrame
+
+-- Lock Button (Small, near shoot button)
+local LockBtn = Instance.new("TextButton")
+LockBtn.Size = UDim2.new(0, 110, 0, 35)
+LockBtn.Position = UDim2.new(0.8, -10, 0.5, 110)
+LockBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+LockBtn.Text = "🔒 Lock Position"
+LockBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+LockBtn.TextScaled = true
+LockBtn.Font = Enum.Font.GothamSemibold
+LockBtn.Parent = LocalPlayer.PlayerGui
+
+local LockCorner = Instance.new("UICorner")
+LockCorner.CornerRadius = UDim.new(0, 8)
+LockCorner.Parent = LockBtn
+
+LockBtn.MouseButton1Click:Connect(function()
+    ShootButtonLocked = not ShootButtonLocked
+    ShootFrame.Draggable = not ShootButtonLocked
+    LockBtn.Text = ShootButtonLocked and "🔓 Unlock Position" or "🔒 Lock Position"
+end)
+
+-- Shoot on Click (Hold for spam)
+ShootFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        PowerfulShoot()
+    end
+end)
+
+-- Auto spam while holding (for max power)
+local holding = false
+ShootFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        holding = true
+        spawn(function()
+            while holding do
+                PowerfulShoot()
+                wait(0.08) -- Fast fire rate for "guaranteed" feel
+            end
+        end)
+    end
+end)
+
+ShootFrame.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        holding = false
+    end
+end)
+
+print("Dingus Hub Minimal Loaded - Powerful Shoot Button Ready")    
     local nameLabel = Drawing.new("Text")
     nameLabel.Size = 17
     nameLabel.Center = true
